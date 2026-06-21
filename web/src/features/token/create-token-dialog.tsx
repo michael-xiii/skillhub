@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { tokenApi } from '@/api/client'
@@ -13,15 +13,9 @@ import {
   DialogTrigger,
 } from '@/shared/ui/dialog'
 import { Button } from '@/shared/ui/button'
-import { Input } from '@/shared/ui/input'
+import { Input, INPUT_BASE_CLASS_NAME } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/shared/ui/select'
+import { cn } from '@/shared/lib/utils'
 import { centeredToastOptions, toast } from '@/shared/lib/toast'
 import { formatLocalDateTime } from '@/shared/lib/date-time'
 import type { CreateTokenRequest, CreateTokenResponse } from '@/api/types'
@@ -49,6 +43,8 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
   const [expiresAtError, setExpiresAtError] = useState<string | null>(null)
   const [, copy] = useCopyToClipboard()
   const queryClient = useQueryClient()
+  const createdTokenRef = useRef<CreateTokenResponse | null>(null)
+  createdTokenRef.current = createdToken
 
   const normalizedName = name.trim()
   const hasDuplicateName = existingNames.some(
@@ -58,15 +54,33 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
   const createMutation = useMutation({
     mutationFn: (request: CreateTokenRequest) => tokenApi.createToken(request),
     onSuccess: (data) => {
+      // Switch to the reveal view only; reset form fields when the dialog closes.
+      // Native <select> avoids Radix Select body portals that race with our custom Dialog portal.
       setCreatedToken(data)
-      setName('')
-      setNameError(null)
-      setExpirationMode('never')
-      setCustomExpiresAt('')
-      setExpiresAtError(null)
-      queryClient.invalidateQueries({ queryKey: ['tokens'] })
     },
   })
+
+  const refreshTokenList = () => {
+    queryClient.invalidateQueries({ queryKey: ['tokens'] })
+  }
+
+  const resetTransientState = () => {
+    setCreatedToken(null)
+    setName('')
+    setNameError(null)
+    setExpirationMode('never')
+    setCustomExpiresAt('')
+    setExpiresAtError(null)
+    createMutation.reset()
+  }
+
+  const closeDialog = (refreshList: boolean) => {
+    if (refreshList) {
+      refreshTokenList()
+    }
+    resetTransientState()
+    setOpen(false)
+  }
 
   const handleCreate = () => {
     if (!normalizedName) {
@@ -93,15 +107,17 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
     createMutation.mutate({ name: normalizedName, expiresAt })
   }
 
-  const handleClose = () => {
-    setOpen(false)
-    setCreatedToken(null)
-    setName('')
-    setNameError(null)
-    setExpirationMode('never')
-    setCustomExpiresAt('')
-    setExpiresAtError(null)
-    createMutation.reset()
+  const handleClose = (refreshList = false) => {
+    closeDialog(refreshList || createdTokenRef.current !== null)
+  }
+
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      resetTransientState()
+      setOpen(true)
+      return
+    }
+    closeDialog(createdTokenRef.current !== null)
   }
 
   const handleCopyToken = async () => {
@@ -128,18 +144,7 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
   return (
     // Reopening the dialog resets transient creation state because the raw token
     // is only meant to be shown once, immediately after a successful create call.
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (nextOpen) {
-        setCreatedToken(null)
-        setName('')
-        setNameError(null)
-        setExpirationMode('never')
-        setCustomExpiresAt('')
-        setExpiresAtError(null)
-        createMutation.reset()
-      }
-      setOpen(nextOpen)
-    }}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent>
         {!createdToken ? (
@@ -183,24 +188,21 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
 
               <div className="space-y-2">
                 <Label htmlFor="token-expiration">{t('createToken.expirationLabel')}</Label>
-                <Select
+                <select
+                  id="token-expiration"
+                  className={cn(INPUT_BASE_CLASS_NAME, 'appearance-none bg-secondary/50')}
                   value={expirationMode}
-                  onValueChange={(value) => {
-                    setExpirationMode(value as TokenExpirationMode)
+                  onChange={(event) => {
+                    setExpirationMode(event.target.value as TokenExpirationMode)
                     setExpiresAtError(null)
                   }}
                 >
-                  <SelectTrigger id="token-expiration">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="never">{t('createToken.expirationNever')}</SelectItem>
-                    <SelectItem value="7d">{t('createToken.expiration7d')}</SelectItem>
-                    <SelectItem value="30d">{t('createToken.expiration30d')}</SelectItem>
-                    <SelectItem value="90d">{t('createToken.expiration90d')}</SelectItem>
-                    <SelectItem value="custom">{t('createToken.expirationCustom')}</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <option value="never">{t('createToken.expirationNever')}</option>
+                  <option value="7d">{t('createToken.expiration7d')}</option>
+                  <option value="30d">{t('createToken.expiration30d')}</option>
+                  <option value="90d">{t('createToken.expiration90d')}</option>
+                  <option value="custom">{t('createToken.expirationCustom')}</option>
+                </select>
                 {expirationMode === 'custom' ? (
                   <Input
                     id="token-custom-expiration"
@@ -226,7 +228,7 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
               <p className="text-sm text-red-600">{createMutation.error.message}</p>
             ) : null}
             <DialogFooter className="sm:justify-center sm:space-x-3">
-              <Button variant="outline" onClick={handleClose}>
+              <Button variant="outline" onClick={() => handleClose()}>
                 {t('dialog.cancel')}
               </Button>
               <Button
@@ -265,7 +267,7 @@ export function CreateTokenDialog({ children, existingNames = [] }: CreateTokenD
               <Button onClick={handleCopyToken}>
                 {t('createToken.copyToken')}
               </Button>
-              <Button variant="outline" onClick={handleClose}>
+              <Button variant="outline" onClick={() => handleClose()}>
                 {t('dialog.close')}
               </Button>
             </DialogFooter>

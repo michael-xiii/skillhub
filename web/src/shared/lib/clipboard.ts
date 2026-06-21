@@ -16,7 +16,7 @@ export async function copyToClipboard(text: string): Promise<void> {
   document.body.appendChild(textarea)
   textarea.select()
   const success = document.execCommand('copy')
-  document.body.removeChild(textarea)
+  textarea.remove()
 
   if (!success) {
     throw new Error('Failed to copy text to clipboard')
