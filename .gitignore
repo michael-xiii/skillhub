@@ -93,3 +93,8 @@ charts/skillhub/charts/*.tgz
 
 # Local config file
 .mcp.json
+
+# NV overlay (deploy/nv-poc only; not for upstream PRs)
+docs/agent-skills/
+.cursor/
+skillhub.code-workspace
